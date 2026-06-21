@@ -27,25 +27,21 @@ export default async function handler(req, res) {
           model: "claude-sonnet-4-6",
           max_tokens: 4000,
           tools: [{ type: "web_search_20250305", name: "web_search" }],
-          system: `You are a fashion product researcher. Search for the products requested and return results as a JSON array.
+          system: `You are a fashion product researcher. Find real products and return a JSON array.
 
-For each product you find, you MUST visit the actual product page and extract the real image URL from the page's HTML or og:image meta tag.
+For imageUrl, find the direct CDN image URL. Known patterns:
+- Jacquemus: https://media.jacquemus.com/image/upload/...jpg (Cloudinary)
+- SSENSE: https://img.ssense.com/...jpg
+- Mytheresa: https://www.mytheresa.com/media/...jpg
+- END Clothing: https://img.endclothing.com/...jpg
+- Selfridges: https://images.selfridges.com/...jpg
+- Browns: https://cdn-images.farfetch-contents.com/...jpg
+- For Celine/Loewe/other brand sites: find the og:image from retailer pages like SSENSE or Mytheresa instead, as brand CDNs block external access
 
-The og:image meta tag looks like: <meta property="og:image" content="https://...jpg">
-This will always contain a direct image URL.
+Return ONLY a raw JSON array. Each item:
+{ "brand": "", "name": "", "price": "", "imageUrl": "direct image URL or null", "productUrl": "" }
 
-Return ONLY a raw JSON array, no markdown, no explanation. Each item:
-{
-  "brand": "Brand Name",
-  "name": "Product Name",
-  "price": "£000",
-  "imageUrl": "https://direct-image-url.jpg",
-  "productUrl": "https://product-page-url",
-  "debug": "source of imageUrl e.g. og:image from ssense.com"
-}
-
-imageUrl MUST be a direct URL ending in .jpg .jpeg .png or .webp - not a page URL.
-Find 3-4 products per brand mentioned.`,
+Find 4-6 products per brand. imageUrl must end in .jpg .jpeg .png or .webp`,
           messages
         })
       });
@@ -70,6 +66,7 @@ Find 3-4 products per brand mentioned.`,
     }
 
     let products = parseJson(finalText);
+
     if (!products) {
       const r2 = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -77,7 +74,7 @@ Find 3-4 products per brand mentioned.`,
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
           max_tokens: 4000,
-          messages: [{ role: "user", content: `Extract fashion products from this text and return ONLY a JSON array with fields: brand, name, price, imageUrl, productUrl, debug.\n\n${finalText.slice(0, 8000)}\n\nJSON array only:` }]
+          messages: [{ role: "user", content: `Extract fashion products from this text and return ONLY a JSON array with fields: brand, name, price, imageUrl, productUrl.\n\n${finalText.slice(0, 8000)}\n\nJSON array only:` }]
         })
       });
       const d2 = await r2.json();
@@ -86,15 +83,7 @@ Find 3-4 products per brand mentioned.`,
 
     if (!products) return res.status(422).json({ error: "No products found." });
 
-    // Return ALL products including debug info and raw imageUrls so we can diagnose
-    res.json({
-      products: products.filter(p => p && p.name && p.brand),
-      debug: {
-        rawText: finalText.slice(0, 2000),
-        productCount: products.length,
-        imageUrls: products.map(p => ({ name: p.name, imageUrl: p.imageUrl, debug: p.debug }))
-      }
-    });
+    res.json({ products: products.filter(p => p && p.name && p.brand) });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });
