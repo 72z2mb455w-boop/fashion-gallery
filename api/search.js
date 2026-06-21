@@ -12,10 +12,10 @@ export default async function handler(req, res) {
   const beeKey = process.env.SCRAPINGBEE_API_KEY;
 
   if (!anthropicKey) return res.status(500).json({ error: "ANTHROPIC_API_KEY not set" });
-  if (!beeKey) return res.status(500).json({ error: "SCRAPINGBEE_API_KEY not set — add it in Vercel environment variables" });
+  if (!beeKey) return res.status(500).json({ error: "SCRAPINGBEE_API_KEY not set" });
 
   try {
-    // STEP 1: Single Claude call — identify brands, category, and collection URLs
+    // STEP 1: Claude identifies collection URLs for each brand
     const r1 = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -28,124 +28,128 @@ export default async function handler(req, res) {
         max_tokens: 1000,
         messages: [{
           role: "user",
-          content: `Given this fashion search request: "${prompt}"
+          content: `Given this fashion search: "${prompt}"
 
-Return a JSON array of collection page URLs to scrape — one per brand.
-Use the brand's official website collection/category page that matches the request.
+Identify each brand and the exact collection page URL on their official site that matches the category requested.
 
-Examples:
-- "graphic tees from Celine" → https://www.celine.com/en-us/women/ready-to-wear/t-shirts-and-sweatshirts/
-- "shoes from Loewe" → https://www.loewe.com/int/en/women/shoes/
-- "outerwear from Jacquemus" → https://www.jacquemus.com/en_gb/jackets-and-coats/
-- "dresses from The Row" → https://www.therow.com/en-us/women/clothing/dresses/
-- "knitwear from Bottega Veneta" → https://www.bottegaveneta.com/en-gb/clothing/knitwear/
+Return ONLY a raw JSON array:
+[{"brand":"Celine","url":"https://www.celine.com/en-us/women/ready-to-wear/t-shirts-and-sweatshirts/"},...]
 
-Return ONLY a JSON array like:
-[
-  {"brand": "Celine", "url": "https://..."},
-  {"brand": "Loewe", "url": "https://..."}
-]
-
-No markdown, no explanation. Raw JSON array only.`
+Use real, working collection page URLs you know from training data.
+No markdown, no explanation.`
         }]
       })
     });
 
     const d1 = await r1.json();
     if (d1.error) throw new Error(d1.error.message);
-
     const urlText = (d1.content || []).filter(b => b.type === "text").map(b => b.text).join("").trim();
     const brandUrls = parseJson(urlText);
-    if (!brandUrls || brandUrls.length === 0) throw new Error("Could not identify brands or collection pages from your prompt.");
+    if (!brandUrls || brandUrls.length === 0) throw new Error("Could not identify brands from your prompt.");
 
-    // STEP 2: For each brand URL, use ScrapingBee to render the page and extract products
+    // STEP 2: ScrapingBee renders each page, then Claude extracts products from the HTML
     const allProducts = [];
 
     await Promise.all(brandUrls.map(async ({ brand, url }) => {
       try {
-        // ScrapingBee renders the page with a real Chrome browser
-        // extract_rules pulls product data directly from the rendered DOM
-        const beeUrl = "https://app.scrapingbee.com/api/v1/?" + new URLSearchParams({
+        // Fetch fully rendered HTML via ScrapingBee
+        const params = new URLSearchParams({
           api_key: beeKey,
           url: url,
           render_js: "true",
-          wait: "3000", // wait 3s for JS to load images
-          extract_rules: JSON.stringify({
-            products: {
-              selector: "a[href]",
-              type: "list",
-              output: {
-                name: "img @alt",
-                image: "img @src",
-                link: "@href"
-              }
-            }
+          wait: "4000",
+          block_ads: "true",
+          block_resources: "false"
+        });
+
+        const beeRes = await fetch(`https://app.scrapingbee.com/api/v1/?${params}`);
+
+        if (!beeRes.ok) {
+          const errText = await beeRes.text();
+          throw new Error(`ScrapingBee ${beeRes.status}: ${errText.slice(0, 200)}`);
+        }
+
+        const html = await beeRes.text();
+
+        if (html.length < 500) {
+          throw new Error(`Page returned empty or blocked (${html.length} bytes)`);
+        }
+
+        // Extract just the relevant parts of the HTML to save tokens
+        // Look for JSON-LD product data, og:image, and img tags
+        const trimmedHtml = extractRelevantHtml(html, url);
+
+        // STEP 3: Claude reads the HTML and extracts products
+        const r2 = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": anthropicKey,
+            "anthropic-version": "2023-06-01"
+          },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-6",
+            max_tokens: 2000,
+            messages: [{
+              role: "user",
+              content: `Extract fashion products from this rendered HTML of ${brand}'s website (${url}).
+
+Find product listings with their names and image URLs. Images will be in <img> tags, background-image CSS, or JSON-LD data.
+
+Return ONLY a JSON array (max 8 items):
+[{"name":"Product Name","imageUrl":"https://...jpg","productUrl":"https://...","price":"£000"}]
+
+Rules:
+- imageUrl must be a full https:// URL ending in .jpg .jpeg .png or .webp
+- productUrl must be a full https:// URL to the product page
+- If relative URLs, make them absolute using base: ${new URL(url).origin}
+- Skip navigation, banners, logos — only actual product images
+- If no products found return []
+
+HTML:
+${trimmedHtml}`
+            }]
           })
         });
 
-        const beeRes = await fetch(beeUrl);
-        const beeText = await beeRes.text();
+        const d2 = await r2.json();
+        if (d2.error) throw new Error(d2.error.message);
 
-        let beeData;
-        try { beeData = JSON.parse(beeText); } catch {
-          console.error("ScrapingBee non-JSON response:", beeText.slice(0, 200));
-          throw new Error("ScrapingBee returned invalid response");
+        const productText = (d2.content || []).filter(b => b.type === "text").map(b => b.text).join("").trim();
+        const products = parseJson(productText);
+
+        if (products && products.length > 0) {
+          products.forEach(p => {
+            if (p.name && (p.imageUrl || p.productUrl)) {
+              allProducts.push({
+                brand,
+                name: p.name,
+                imageUrl: p.imageUrl || null,
+                productUrl: p.productUrl || url,
+                price: p.price || null
+              });
+            }
+          });
+        } else {
+          throw new Error("No products found on page — site may require login or block scraping");
         }
-
-        if (!beeRes.ok) {
-          throw new Error(`ScrapingBee error: ${beeData.message || beeRes.status}`);
-        }
-
-        // Filter extracted items to only real product images
-        const items = (beeData.products || []).filter(item => {
-          if (!item.image || !item.name || !item.link) return false;
-          if (!item.image.startsWith("http")) return false;
-          // Skip tiny tracking pixels, SVGs, logos
-          if (item.image.includes(".svg")) return false;
-          if (item.image.includes("logo")) return false;
-          if (item.image.includes("icon")) return false;
-          if (item.name.length < 3) return false;
-          return true;
-        });
-
-        // Deduplicate by image URL, take first 8
-        const seen = new Set();
-        const unique = [];
-        for (const item of items) {
-          const key = item.image;
-          if (!seen.has(key)) {
-            seen.add(key);
-            // Make relative links absolute
-            const productUrl = item.link.startsWith("http")
-              ? item.link
-              : new URL(item.link, url).href;
-            unique.push({
-              brand,
-              name: item.name.trim(),
-              imageUrl: item.image,
-              productUrl
-            });
-          }
-          if (unique.length >= 8) break;
-        }
-
-        allProducts.push(...unique);
 
       } catch (e) {
-        console.error(`Failed to scrape ${brand}:`, e.message);
-        // Don't fail the whole request — just skip this brand
+        console.error(`${brand} failed:`, e.message);
         allProducts.push({
           brand,
-          name: `Could not load ${brand} products`,
+          name: `${brand} — ${e.message}`,
           imageUrl: null,
           productUrl: url,
-          error: e.message
+          error: true
         });
       }
     }));
 
-    if (allProducts.length === 0) {
-      return res.status(422).json({ error: "No products found. The brands' websites may be blocking scraping." });
+    const valid = allProducts.filter(p => !p.error);
+    if (valid.length === 0) {
+      const errors = allProducts.map(p => `${p.brand}: ${p.name}`).join("; ");
+      return res.status(422).json({ error: `Could not load products. ${errors}` });
     }
 
     res.json({ products: allProducts, brandUrls });
@@ -154,6 +158,35 @@ No markdown, no explanation. Raw JSON array only.`
     console.error(e);
     res.status(500).json({ error: e.message });
   }
+}
+
+function extractRelevantHtml(html, url) {
+  // Extract the most useful parts to reduce token usage:
+  // 1. JSON-LD product schema
+  // 2. All img tags with src
+  // 3. All anchor tags with href that look like products
+  // Limit to 15000 chars
+
+  const parts = [];
+
+  // JSON-LD schemas (often contain full product data)
+  const jsonLdMatches = html.match(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/gi) || [];
+  jsonLdMatches.forEach(m => parts.push(m));
+
+  // Meta og:image
+  const ogImages = html.match(/<meta[^>]*og:image[^>]*>/gi) || [];
+  ogImages.forEach(m => parts.push(m));
+
+  // All img tags
+  const imgs = html.match(/<img[^>]+>/gi) || [];
+  imgs.slice(0, 100).forEach(m => parts.push(m));
+
+  // Anchor tags that look like product links
+  const anchors = html.match(/<a[^>]+href="[^"]*(?:product|item|p\/|\/en\/)[^"]*"[^>]*>[\s\S]{0,200}<\/a>/gi) || [];
+  anchors.slice(0, 50).forEach(m => parts.push(m));
+
+  const combined = parts.join("\n").slice(0, 15000);
+  return combined || html.slice(0, 15000);
 }
 
 function parseJson(text) {
