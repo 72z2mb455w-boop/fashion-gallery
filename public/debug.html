@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Debug</title>
+<style>
+body { background: #0a0a0a; color: #e0e0e0; font-family: monospace; padding: 20px; }
+h2 { font-size: 14px; color: #888; margin-bottom: 12px; }
+input { width: 100%; padding: 10px; background: #111; border: 1px solid #333; color: #fff; font-size: 13px; border-radius: 3px; margin-bottom: 8px; }
+button { padding: 10px 20px; background: #e0e0e0; color: #000; border: none; border-radius: 3px; font-weight: 700; cursor: pointer; font-size: 12px; }
+#out { margin-top: 20px; background: #111; border: 1px solid #222; border-radius: 3px; padding: 16px; font-size: 11px; line-height: 1.7; white-space: pre-wrap; word-break: break-all; max-height: 80vh; overflow-y: auto; }
+.ok { color: #4ade80; }
+.err { color: #f87171; }
+.url { color: #60a5fa; }
+.label { color: #888; }
+</style>
+</head>
+<body>
+<h2>Fashion Gallery — Image URL Debugger</h2>
+<input type="text" id="prompt" value="Graphic tees from Celine and Jacquemus" placeholder="Search prompt...">
+<button onclick="run()">Run Diagnostic</button>
+<div id="out">Results will appear here...</div>
+
+<script>
+async function run() {
+  var out = document.getElementById("out");
+  var prompt = document.getElementById("prompt").value.trim();
+  out.innerHTML = "Searching... (this takes 20-40 seconds)\n";
+
+  try {
+    var res = await fetch("/api/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: prompt })
+    });
+
+    var data = await res.json();
+    var html = "";
+
+    html += '<span class="label">HTTP Status:</span> ' + res.status + "\n\n";
+
+    if (data.error) {
+      html += '<span class="err">ERROR: ' + data.error + '</span>\n';
+    }
+
+    if (data.products) {
+      html += '<span class="ok">PRODUCTS FOUND: ' + data.products.length + '</span>\n\n';
+      data.products.forEach(function(p, i) {
+        html += '<span class="label">--- Product ' + (i+1) + ' ---</span>\n';
+        html += 'Brand:      ' + (p.brand || "none") + "\n";
+        html += 'Name:       ' + (p.name || "none") + "\n";
+        html += 'Price:      ' + (p.price || "none") + "\n";
+        html += '<span class="label">imageUrl:   </span>';
+        if (p.imageUrl) {
+          html += '<span class="url">' + p.imageUrl + '</span>';
+        } else {
+          html += '<span class="err">NULL / MISSING</span>';
+        }
+        html += "\n";
+        html += 'productUrl: ' + (p.productUrl || "none") + "\n";
+        if (p.debug) html += 'debug:      ' + p.debug + "\n";
+        html += "\n";
+      });
+    }
+
+    if (data.debug) {
+      html += '<span class="label">--- IMAGE URL SUMMARY ---</span>\n';
+      (data.debug.imageUrls || []).forEach(function(item) {
+        html += item.name + ':\n  ';
+        if (item.imageUrl) {
+          html += '<span class="url">' + item.imageUrl + '</span>';
+        } else {
+          html += '<span class="err">NO IMAGE URL</span>';
+        }
+        if (item.debug) html += '\n  source: ' + item.debug;
+        html += "\n\n";
+      });
+
+      if (data.debug.rawText) {
+        html += '<span class="label">--- RAW API TEXT (first 1500 chars) ---</span>\n';
+        html += data.debug.rawText.slice(0, 1500);
+      }
+    }
+
+    out.innerHTML = html;
+
+    // Also test if each imageUrl actually loads
+    if (data.products && data.products.length > 0) {
+      html += '\n\n<span class="label">--- TESTING IMAGE PROXY ---</span>\n';
+      out.innerHTML = html;
+
+      for (var i = 0; i < Math.min(data.products.length, 3); i++) {
+        var p = data.products[i];
+        if (!p.imageUrl) {
+          html += p.name + ': <span class="err">No imageUrl to test</span>\n';
+        } else {
+          var proxyUrl = "/api/image?url=" + encodeURIComponent(p.imageUrl);
+          try {
+            var imgRes = await fetch(proxyUrl);
+            var ct = imgRes.headers.get("content-type") || "unknown";
+            if (imgRes.ok && ct.indexOf("image") !== -1) {
+              html += p.name + ': <span class="ok">✓ Image loaded (' + ct + ', ' + imgRes.headers.get("content-length") + ' bytes)</span>\n';
+            } else {
+              html += p.name + ': <span class="err">✗ HTTP ' + imgRes.status + ' content-type: ' + ct + '</span>\n';
+              var errText = await imgRes.text();
+              html += '  Error: ' + errText.slice(0, 100) + '\n';
+            }
+          } catch(e) {
+            html += p.name + ': <span class="err">✗ Fetch failed: ' + e.message + '</span>\n';
+          }
+        }
+        out.innerHTML = html;
+      }
+    }
+
+  } catch(e) {
+    out.innerHTML = '<span class="err">FETCH FAILED: ' + e.message + '</span>\n\nThis means the /api/search endpoint itself is not reachable.';
+  }
+}
+</script>
+</body>
+</html>
