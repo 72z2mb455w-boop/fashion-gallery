@@ -11,34 +11,6 @@ export default async function handler(req, res) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(500).json({ error: "ANTHROPIC_API_KEY not set" });
 
-  const SYSTEM = `You are a fashion product researcher with web search. Find real products and return a JSON array.
-
-CRITICAL - imageUrl must be a DIRECT CDN image file URL. Here are the exact formats for each retailer:
-
-SSENSE: https://img.ssense.com/... (contains img.ssense.com)
-Net-a-Porter: https://www.net-a-porter.com/variants/images/... OR https://cache.net-a-porter.com/images/...
-Mr Porter: https://www.mrporter.com/variants/images/...
-Mytheresa: https://www.mytheresa.com/media/...
-END Clothing: https://img.endclothing.com/... OR https://cdn.endclothing.com/...
-Browns Fashion: https://cdn-images.farfetch-contents.com/...
-Selfridges: https://images.selfridges.com/...
-MatchesFashion: https://cdn-images.farfetch-contents.com/...
-LUISAVIAROMA: https://images.luisaviaroma.com/...
-24S: https://media.24s.com/...
-Cettire: https://cdn.cettire.com/...
-Official brand sites use their own CDN (e.g. loewe.com/cdn, celine.com/on/...)
-
-RULES:
-- Search for products then look at the actual page source/images
-- imageUrl MUST end in .jpg, .jpeg, .png, or .webp
-- imageUrl must NOT be a product page URL - it must be a direct image file
-- productUrl is the product page URL
-- Find 4-6 products per brand
-- If you cannot find a direct image CDN URL for a product, set imageUrl to null
-- Return ONLY a raw JSON array starting with [ - no markdown, no explanation
-
-Each item: { "brand": "", "name": "", "price": "", "imageUrl": "" or null, "productUrl": "" }`;
-
   try {
     const messages = [{ role: "user", content: prompt }];
     let finalText = "";
@@ -55,7 +27,25 @@ Each item: { "brand": "", "name": "", "price": "", "imageUrl": "" or null, "prod
           model: "claude-sonnet-4-6",
           max_tokens: 4000,
           tools: [{ type: "web_search_20250305", name: "web_search" }],
-          system: SYSTEM,
+          system: `You are a fashion product researcher. Search for the products requested and return results as a JSON array.
+
+For each product you find, you MUST visit the actual product page and extract the real image URL from the page's HTML or og:image meta tag.
+
+The og:image meta tag looks like: <meta property="og:image" content="https://...jpg">
+This will always contain a direct image URL.
+
+Return ONLY a raw JSON array, no markdown, no explanation. Each item:
+{
+  "brand": "Brand Name",
+  "name": "Product Name",
+  "price": "£000",
+  "imageUrl": "https://direct-image-url.jpg",
+  "productUrl": "https://product-page-url",
+  "debug": "source of imageUrl e.g. og:image from ssense.com"
+}
+
+imageUrl MUST be a direct URL ending in .jpg .jpeg .png or .webp - not a page URL.
+Find 3-4 products per brand mentioned.`,
           messages
         })
       });
@@ -68,7 +58,6 @@ Each item: { "brand": "", "name": "", "price": "", "imageUrl": "" or null, "prod
         finalText = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
         break;
       }
-
       if (data.stop_reason === "tool_use") {
         const results = (data.content || [])
           .filter(b => b.type === "tool_use")
@@ -81,8 +70,6 @@ Each item: { "brand": "", "name": "", "price": "", "imageUrl": "" or null, "prod
     }
 
     let products = parseJson(finalText);
-
-    // Cleanup pass
     if (!products) {
       const r2 = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -90,42 +77,28 @@ Each item: { "brand": "", "name": "", "price": "", "imageUrl": "" or null, "prod
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
           max_tokens: 4000,
-          messages: [{
-            role: "user",
-            content: `Extract fashion products from this text. Return ONLY a JSON array with fields: brand, name, price, imageUrl, productUrl.\n\n${finalText.slice(0, 8000)}\n\nJSON array only:`
-          }]
+          messages: [{ role: "user", content: `Extract fashion products from this text and return ONLY a JSON array with fields: brand, name, price, imageUrl, productUrl, debug.\n\n${finalText.slice(0, 8000)}\n\nJSON array only:` }]
         })
       });
       const d2 = await r2.json();
       products = parseJson((d2.content || []).filter(b => b.type === "text").map(b => b.text).join("\n"));
     }
 
-    if (!products) return res.status(422).json({ error: "No products found. Try rephrasing your search." });
+    if (!products) return res.status(422).json({ error: "No products found." });
 
-    // Filter valid products and clean imageUrls
-    const valid = products
-      .filter(p => p && p.name && p.brand)
-      .map(p => ({
-        ...p,
-        // Only keep imageUrl if it looks like a real CDN image URL
-        imageUrl: isValidImageUrl(p.imageUrl) ? p.imageUrl : null
-      }));
-
-    res.json({ products: valid });
+    // Return ALL products including debug info and raw imageUrls so we can diagnose
+    res.json({
+      products: products.filter(p => p && p.name && p.brand),
+      debug: {
+        rawText: finalText.slice(0, 2000),
+        productCount: products.length,
+        imageUrls: products.map(p => ({ name: p.name, imageUrl: p.imageUrl, debug: p.debug }))
+      }
+    });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });
   }
-}
-
-function isValidImageUrl(url) {
-  if (!url || typeof url !== "string") return false;
-  if (!url.startsWith("http")) return false;
-  // Must end in an image extension (before any query string)
-  const path = url.split("?")[0].toLowerCase();
-  if (!path.match(/\.(jpg|jpeg|png|webp|gif)$/)) return false;
-  // Must not be a product page (product pages don't end in image extensions but check anyway)
-  return true;
 }
 
 function parseJson(text) {
