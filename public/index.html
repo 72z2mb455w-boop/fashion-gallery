@@ -55,15 +55,17 @@ textarea::placeholder{color:#2e2e2e}
 .iw img.ok{opacity:1}
 .iph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
 .ms{width:18px;height:18px;border:2px solid #222;border-top-color:#555;border-radius:50%;animation:spin .8s linear infinite}
+.iph.err{flex-direction:column;gap:6px}
 .iph.err .ms{display:none}
-.iph.err::after{content:"No image";font-size:8px;color:#2a2a2a}
+.iph.err .err-icon{font-size:18px;opacity:.3}
+.iph.err .err-txt{font-size:8px;color:#2a2a2a;text-align:center;padding:0 8px}
 .ci{padding:8px 10px 4px;display:flex;gap:6px;align-items:flex-start}
 .cm{flex:1;min-width:0}
 .cn{font-size:10px;font-weight:600;color:#ccc;line-height:1.3;text-transform:uppercase;letter-spacing:.2px;margin-bottom:2px}
 .cp{font-size:10px;color:var(--muted)}
 .sl{flex-shrink:0;font-size:9px;color:#3a3a3a;text-decoration:none;border:1px solid #1e1e1e;padding:3px 7px;border-radius:2px;white-space:nowrap}
 .sl:hover{color:#666;border-color:#333}
-.svb{display:block;width:calc(100% - 20px);margin:4px 10px 10px;padding:8px;background:#0a1a0a;border:1px solid #1a3a1a;border-radius:2px;color:var(--green);font-size:10px;font-weight:700;letter-spacing:.8px;text-align:center;cursor:pointer;font-family:inherit}
+.svb{display:block;width:calc(100% - 20px);margin:4px 10px 10px;padding:8px;background:#0a1a0a;border:1px solid #1a3a1a;border-radius:2px;color:var(--green);font-size:10px;font-weight:700;letter-spacing:.8px;text-align:center;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent}
 .svb:active{opacity:.7}
 </style>
 </head>
@@ -95,31 +97,162 @@ textarea::placeholder{color:#2e2e2e}
   <button class="tb ml" onclick="rs()">← New</button>
 </div>
 <div class="gal" id="gl"><div class="grid" id="gr"></div></div>
+
 <script>
 var pr=[],sel=new Set(),bz=false;
-var pe=document.getElementById("p"),btn=document.getElementById("sb"),er=document.getElementById("er"),tb=document.getElementById("tb"),gl=document.getElementById("gl"),gr=document.getElementById("gr"),tc=document.getElementById("tc"),nb=document.getElementById("nb"),cb=document.getElementById("cb"),sm=document.getElementById("sm");
+var pe=document.getElementById("p"),btn=document.getElementById("sb"),er=document.getElementById("er"),
+    tb=document.getElementById("tb"),gl=document.getElementById("gl"),gr=document.getElementById("gr"),
+    tc=document.getElementById("tc"),nb=document.getElementById("nb"),cb=document.getElementById("cb"),sm=document.getElementById("sm");
+
 pe.addEventListener("input",function(){btn.className=(pe.value.trim()&&!bz)?"r":"";});
 pe.addEventListener("keydown",function(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();ds();}});
 function uc(el){pe.value=el.textContent;btn.className="r";}
-function sv(id){["vi","vs","ve"].forEach(function(v){document.getElementById(v).className="view"+(v===id?" on":"");});tb.className="toolbar"+(id==="dn"?" on":"");gl.className="gal"+(id==="dn"?" on":"");er.className="err";}
+
+function sv(id){
+  ["vi","vs","ve"].forEach(function(v){document.getElementById(v).className="view"+(v===id?" on":"");});
+  tb.className="toolbar"+(id==="dn"?" on":"");
+  gl.className="gal"+(id==="dn"?" on":"");
+  er.className="err";
+}
 function se(msg){sv("vi");er.className="err on";er.textContent="⚠ "+msg;}
-async function ds(){var p=pe.value.trim();if(!p||bz)return;bz=true;btn.className="";btn.textContent="…";sel.clear();pr=[];sv("vs");er.className="err";document.getElementById("ch").style.display="none";
-try{sm.textContent="Searching…";var res=await fetch("/api/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:p})});var data=await res.json();if(!res.ok)throw new Error(data.error||"Server error "+res.status);pr=data.products||[];if(pr.length===0){sv("ve");return;}bg();sv("dn");tc.textContent=pr.length+" product"+(pr.length!==1?"s":"");}
-catch(e){se(e.message);}finally{bz=false;btn.className=pe.value.trim()?"r":"";btn.textContent="SEARCH";}}
-function bg(){gr.innerHTML="";document.getElementById("fi").value="";pr.forEach(function(p,i){var is=p.imageUrl?"/api/image?url="+encodeURIComponent(p.imageUrl):"";var c=document.createElement("div");c.className="card";c.dataset.i=i;c.dataset.q=((p.name||"")+" "+(p.brand||"")).toLowerCase();c.onclick=function(){tg(i);};
-c.innerHTML='<div class="chk"></div><div class="bt">'+ex(p.brand)+'</div><div class="iw"><div class="iph" id="ph'+i+'"><div class="ms"></div></div>'+(is?'<img src="'+is+'" onload="il(this,'+i+')" onerror="ie('+i+')">':'')+'</div><div class="ci"><div class="cm"><div class="cn">'+ex(p.name)+'</div>'+(p.price?'<div class="cp">'+ex(p.price)+'</div>':'')+'</div>'+(p.productUrl?'<a class="sl" href="'+ex(p.productUrl)+'" target="_blank" rel="noreferrer" onclick="event.stopPropagation()">Shop ↗</a>':'')+'</div>'+(is?'<button class="svb" onclick="saveImg(event,'+i+')">⬇ Save Image</button>':'');
-gr.appendChild(c);});}
-function il(img,i){img.className="ok";var ph=document.getElementById("ph"+i);if(ph)ph.style.display="none";}
-function ie(i){var ph=document.getElementById("ph"+i);if(ph)ph.className="iph err";}
-function saveImg(e,i){e.stopPropagation();var p=pr[i];if(!p||!p.imageUrl)return;var a=document.createElement("a");a.href="/api/image?url="+encodeURIComponent(p.imageUrl);a.download=(p.brand+"-"+p.name).replace(/[^a-z0-9]+/gi,"-").toLowerCase()+".jpg";a.target="_blank";document.body.appendChild(a);a.click();document.body.removeChild(a);}
-function tg(i){var c=document.querySelector(".card[data-i='"+i+"']");if(!c)return;if(sel.has(i)){sel.delete(i);c.classList.remove("sel");c.querySelector(".chk").textContent="";}else{sel.add(i);c.classList.add("sel");c.querySelector(".chk").textContent="✓";}us();}
-function us(){var n=sel.size;nb.disabled=n===0;cb.style.display=n>0?"inline-flex":"none";cb.textContent="Copy "+n+" link"+(n!==1?"s":"");cb.className="tb";}
-function sa(){document.querySelectorAll(".card:not(.hide)").forEach(function(c){var i=parseInt(c.dataset.i);sel.add(i);c.classList.add("sel");c.querySelector(".chk").textContent="✓";});us();}
-function sn(){sel.clear();document.querySelectorAll(".card").forEach(function(c){c.classList.remove("sel");c.querySelector(".chk").textContent="";});us();}
-function fc(){var q=document.getElementById("fi").value.toLowerCase().trim();document.querySelectorAll(".card").forEach(function(c){c.classList.toggle("hide",!(!q||c.dataset.q.indexOf(q)!==-1));});}
-function cl(){var u=[];sel.forEach(function(i){if(pr[i]&&pr[i].productUrl)u.push(pr[i].productUrl);});if(!u.length)return;navigator.clipboard.writeText(u.join("\n")).then(function(){cb.textContent="✓ Copied!";cb.className="tb g";setTimeout(function(){us();},2000);}).catch(function(){var ta=document.createElement("textarea");ta.value=u.join("\n");ta.style.cssText="position:fixed;opacity:0";document.body.appendChild(ta);ta.select();document.execCommand("copy");document.body.removeChild(ta);cb.textContent="✓ Copied!";cb.className="tb g";setTimeout(function(){us();},2000);});}
-function rs(){sv("vi");pr=[];sel.clear();gr.innerHTML="";pe.value="";btn.className="";btn.textContent="SEARCH";document.getElementById("ch").style.display="flex";er.className="err";}
-function ex(s){return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+
+async function ds(){
+  var p=pe.value.trim();if(!p||bz)return;
+  bz=true;btn.className="";btn.textContent="…";sel.clear();pr=[];sv("vs");er.className="err";
+  document.getElementById("ch").style.display="none";
+  try{
+    sm.textContent="Searching…";
+    var res=await fetch("/api/search",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({prompt:p})});
+    var data=await res.json();
+    if(!res.ok)throw new Error(data.error||"Server error "+res.status);
+    pr=data.products||[];
+    if(pr.length===0){sv("ve");return;}
+    bg();sv("dn");
+    tc.textContent=pr.length+" product"+(pr.length!==1?"s":"");
+  }catch(e){se(e.message);}
+  finally{bz=false;btn.className=pe.value.trim()?"r":"";btn.textContent="SEARCH";}
+}
+
+function bg(){
+  gr.innerHTML="";document.getElementById("fi").value="";
+  pr.forEach(function(p,i){
+    var c=document.createElement("div");
+    c.className="card";c.dataset.i=i;
+    c.dataset.q=((p.name||"")+" "+(p.brand||"")).toLowerCase();
+    c.onclick=function(){tg(i);};
+
+    var imgHtml="";
+    if(p.imageUrl){
+      // Load image directly in browser - no proxy needed
+      // Browser can load cross-origin images fine in <img> tags
+      imgHtml='<img src="'+ex(p.imageUrl)+'" referrerpolicy="no-referrer" crossorigin="anonymous" onload="il(this,'+i+')" onerror="ie('+i+')">';
+    }
+
+    c.innerHTML=
+      '<div class="chk"></div>'+
+      '<div class="bt">'+ex(p.brand)+'</div>'+
+      '<div class="iw">'+
+        '<div class="iph" id="ph'+i+'"><div class="ms"></div></div>'+
+        imgHtml+
+      '</div>'+
+      '<div class="ci">'+
+        '<div class="cm">'+
+          '<div class="cn">'+ex(p.name)+'</div>'+
+          (p.price?'<div class="cp">'+ex(p.price)+'</div>':'')+
+        '</div>'+
+        (p.productUrl?'<a class="sl" href="'+ex(p.productUrl)+'" target="_blank" rel="noreferrer" onclick="event.stopPropagation()">Shop ↗</a>':'')+
+      '</div>'+
+      (p.imageUrl?'<button class="svb" onclick="saveImg(event,'+i+')">⬇ Save Image</button>':'');
+
+    gr.appendChild(c);
+  });
+}
+
+function il(img,i){
+  img.className="ok";
+  var ph=document.getElementById("ph"+i);
+  if(ph)ph.style.display="none";
+}
+
+function ie(i){
+  // Image failed — try without crossorigin (some CDNs reject it)
+  var card=document.querySelector(".card[data-i='"+i+"']");
+  if(!card)return;
+  var img=card.querySelector("img");
+  if(img&&img.hasAttribute("crossorigin")){
+    img.removeAttribute("crossorigin");
+    img.removeAttribute("referrerpolicy");
+    var src=img.src;
+    img.src="";
+    img.src=src; // reload without CORS headers
+    img.onerror=function(){ showErrPlaceholder(i); };
+    img.onload=function(){ il(img,i); };
+  } else {
+    showErrPlaceholder(i);
+  }
+}
+
+function showErrPlaceholder(i){
+  var ph=document.getElementById("ph"+i);
+  if(ph){
+    ph.className="iph err";
+    ph.innerHTML='<div class="err-icon">◻</div><div class="err-txt">No image</div>';
+  }
+}
+
+function saveImg(e,i){
+  e.stopPropagation();
+  var p=pr[i];if(!p||!p.imageUrl)return;
+  // Open image directly in new tab — user can long-press (iOS) or right-click to save
+  window.open(p.imageUrl,"_blank");
+}
+
+function tg(i){
+  var c=document.querySelector(".card[data-i='"+i+"']");if(!c)return;
+  if(sel.has(i)){sel.delete(i);c.classList.remove("sel");c.querySelector(".chk").textContent="";}
+  else{sel.add(i);c.classList.add("sel");c.querySelector(".chk").textContent="✓";}
+  us();
+}
+function us(){
+  var n=sel.size;nb.disabled=n===0;
+  cb.style.display=n>0?"inline-flex":"none";
+  cb.textContent="Copy "+n+" link"+(n!==1?"s":"");cb.className="tb";
+}
+function sa(){
+  document.querySelectorAll(".card:not(.hide)").forEach(function(c){
+    var i=parseInt(c.dataset.i);sel.add(i);c.classList.add("sel");c.querySelector(".chk").textContent="✓";
+  });us();
+}
+function sn(){
+  sel.clear();document.querySelectorAll(".card").forEach(function(c){
+    c.classList.remove("sel");c.querySelector(".chk").textContent="";
+  });us();
+}
+function fc(){
+  var q=document.getElementById("fi").value.toLowerCase().trim();
+  document.querySelectorAll(".card").forEach(function(c){
+    c.classList.toggle("hide",!(!q||c.dataset.q.indexOf(q)!==-1));
+  });
+}
+function cl(){
+  var u=[];sel.forEach(function(i){if(pr[i]&&pr[i].productUrl)u.push(pr[i].productUrl);});
+  if(!u.length)return;
+  navigator.clipboard.writeText(u.join("\n")).then(function(){
+    cb.textContent="✓ Copied!";cb.className="tb g";setTimeout(function(){us();},2000);
+  }).catch(function(){
+    var ta=document.createElement("textarea");ta.value=u.join("\n");
+    ta.style.cssText="position:fixed;opacity:0";document.body.appendChild(ta);ta.select();
+    document.execCommand("copy");document.body.removeChild(ta);
+    cb.textContent="✓ Copied!";cb.className="tb g";setTimeout(function(){us();},2000);
+  });
+}
+function rs(){
+  sv("vi");pr=[];sel.clear();gr.innerHTML="";pe.value="";btn.className="";btn.textContent="SEARCH";
+  document.getElementById("ch").style.display="flex";er.className="err";
+}
+function ex(s){
+  return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
 </script>
 </body>
 </html>
